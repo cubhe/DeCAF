@@ -101,16 +101,17 @@ class Loss(nn.Module):
             raise NotImplementedError
         # regularizer
 
-        # if FLAGS.regularize_type == "dncnn2d":
-        #     xhat_trans = torch.transpose(
-        #         torch.squeeze(xhat), 3, 0
-        #     )  # [1, Z, X, Y, Real/Imagenary]
-        #     xhat_concat = torch.cat([xhat_trans[0, ...], xhat_trans[1, ...]], 0)
-        #     xhat_expand = xhat_concat.unsqueeze(3)
-        #     phase_regularize_value = self.__dncnn_2d(FLAGS, xhat_expand.to('cpu'), reuse=reuse)
-        #     absorption_regularize_value = torch.tensor(0.0)
-        # else:
-        #     raise NotImplementedError
+        if FLAGS.regularize_type == "dncnn2d":
+            xhat_trans = torch.transpose(
+                torch.squeeze(xhat), 3, 0
+            )  # [1, Z, X, Y, Real/Imagenary]
+            xhat_concat = torch.cat([xhat_trans[0, ...], xhat_trans[1, ...]], 0)
+            xhat_expand = xhat_concat.unsqueeze(3)
+            dncnn_loss=dncnn_2d(FLAGS,xhat_expand.shape[1])
+            phase_regularize_value = dncnn_loss(FLAGS, xhat_expand.to('cpu'), reuse=reuse)
+            absorption_regularize_value = torch.tensor(0.0)
+        else:
+            raise NotImplementedError
 
         phase_regularize_value=0.5
         absorption_regularize_value=0.5
@@ -153,61 +154,62 @@ class Loss(nn.Module):
         pixel_dif1 = torch.abs(images[:, 1:, :, :] - images[:, :-1, :, :])
         total_var = torch.sum(pixel_dif1)
         return total_var
-    def __dncnn_inference(
-        self,
-        input,
-        reuse,
-        output_channel=1,
-        layer_num=10,
-        filter_size=3,
-        feature_root=64,
-    ):
-        # input layer
-        with torch.no_grad():
-            in_node = nn.Conv2d(input.size(1), feature_root, filter_size, padding=filter_size//2)
-            in_node = F.relu(in_node)
-            # composite convolutional layers
-            for layer in range(2, layer_num):
-                in_node = nn.Conv2d(feature_root, feature_root, filter_size, padding=filter_size//2, bias=False)
-                in_node = F.relu(nn.BatchNorm2d(feature_root)(in_node))
-            # output layer and residual learning
-            in_node = nn.Conv2d(feature_root, output_channel, filter_size, padding=filter_size//2)
-            output = input - in_node
-        return output
+    # def __dncnn_inference(
+    #     self,
+    #     input,
+    #     reuse,
+    #     output_channel=1,
+    #     layer_num=10,
+    #     filter_size=3,
+    #     feature_root=64,
+    # ):
+    #     # input layer
+    #     with torch.no_grad():
+    #         in_node = nn.Conv2d(input.size(1), feature_root, filter_size, padding=filter_size//2)
+    #         in_node = F.relu(in_node)
+    #         # composite convolutional layers
+    #         for layer in range(2, layer_num):
+    #             in_node = nn.Conv2d(feature_root, feature_root, filter_size, padding=filter_size//2, bias=False)
+    #             in_node = F.relu(nn.BatchNorm2d(feature_root)(in_node))
+    #         # output layer and residual learning
+    #         in_node = nn.Conv2d(feature_root, output_channel, filter_size, padding=filter_size//2)
+    #         output = input - in_node
+    #     return output
 
 
 
 
-    def __dncnn_2d(self, FLAGS, images,reuse=True):  # [N, H, W, C]
-        """
-        DnCNN as 2.5 dimensional denoiser based on l-2 norm
-        """
-        a_min = FLAGS.DnCNN_normalization_min
-        a_max = FLAGS.DnCNN_normalization_max
-        normalized = (images - a_min) / (a_max - a_min)
-        denoised = self.__dncnn_inference(torch.clamp(normalized, 0, 1),reuse)
-        denormalized = denoised * (a_max - a_min) + a_min
-        dncnn_res = torch.sum(denormalized**2)
-        return dncnn_res
+    # def __dncnn_2d(self, FLAGS, images,reuse=True):  # [N, H, W, C]
+    #     """
+    #     DnCNN as 2.5 dimensional denoiser based on l-2 norm
+    #     """
+    #     a_min = FLAGS.DnCNN_normalization_min
+    #     a_max = FLAGS.DnCNN_normalization_max
+    #     normalized = (images - a_min) / (a_max - a_min)
+    #     denoised = self.__dncnn_inference(torch.clamp(normalized, 0, 1),reuse)
+    #     denormalized = denoised * (a_max - a_min) + a_min
+    #     dncnn_res = torch.sum(denormalized**2)
+    #     return dncnn_res
 
 
 class dncnn_2d(nn.Module):
-    def __int__(self,FLAGS,output_channel=1,layer_num=10,filter_size=3,feature_root=64,):
+    def __init__(self,FLAGS,input_channel,output_channel=1,layer_num=10,filter_size=3,feature_root=64):
         super(dncnn_2d,self).__init__()
-        self.input_conv=nn.Conv2d(input.size(1), feature_root, filter_size, padding=filter_size // 2)
+        self.input_conv=nn.Conv2d(input_channel, feature_root, filter_size, padding=filter_size // 2)
         self.convs=nn.ModuleList([
-            nn.Linear(FLAGS.mlp_kernel_size, FLAGS.mlp_kernel_size) for i in range(FLAGS.mlp_skip_layer[0])
+            nn.Conv2d(feature_root, feature_root, filter_size, padding=filter_size // 2, bias=False) for i in range(layer_num)
         ])
         self.output_conv=nn.Conv2d(feature_root, output_channel, filter_size, padding=filter_size // 2)
+        self.relu=nn.ReLU()
 
-        in_node = nn.Conv2d(input.size(1), feature_root, filter_size, padding=filter_size // 2)
-        in_node = F.relu(in_node)
-        # composite convolutional layers
-        for layer in range(2, layer_num):
-            in_node = nn.Conv2d(feature_root, feature_root, filter_size, padding=filter_size // 2, bias=False)
-            in_node = F.relu(nn.BatchNorm2d(feature_root)(in_node))
-        # output layer and residual learning
-        in_node = nn.Conv2d(feature_root, output_channel, filter_size, padding=filter_size // 2)
+        # in_node = nn.Conv2d(input.size(1), feature_root, filter_size, padding=filter_size // 2)
+        # in_node = F.relu(in_node)
+        # # composite convolutional layers
+        # for layer in range(2, layer_num):
+        #     in_node = nn.Conv2d(feature_root, feature_root, filter_size, padding=filter_size // 2, bias=False)
+        #     in_node = F.relu(nn.BatchNorm2d(feature_root)(in_node))
+        # # output layer and residual learning
+        # in_node = nn.Conv2d(feature_root, output_channel, filter_size, padding=filter_size // 2)
 
     def forward(self,FLAGS, images,reuse=True):
         a_min = FLAGS.DnCNN_normalization_min
@@ -219,10 +221,11 @@ class dncnn_2d(nn.Module):
         return dncnn_res
 
         return 0
-    def __dncnn_inference(self,input):
+    def __dncnn_inference(self,input,reuse=True):
         x=self.input_conv(input)
         for f in self.convs:
             x=f(x)
+            x=self.relu(x)
         output=self.output_conv(x)
 
         return output

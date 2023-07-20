@@ -61,7 +61,9 @@ def main(argv):
     config_file.write(FLAGS.flags_into_string())
     config_file.close()
 
+    FLAGS.input_dir = r'/home/cubhe/桌面/' + FLAGS.input_dir
     h5_file = h5py.File(FLAGS.input_dir, "r")
+
     train_provider = DecafEndToEndProvider(h5_file)
     train(FLAGS, train_provider, learning_rate=1e-5, epochs=80)
     #model = Model(name=FLAGS.name)
